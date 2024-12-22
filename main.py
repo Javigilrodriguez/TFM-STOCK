@@ -13,7 +13,12 @@ class StockManagementSystem:
         try:
             # Leer el archivo CSV con el separador adecuado y codificación latin1
             self.df = pd.read_csv(data_path, sep=';', encoding='latin1', skiprows=3, header=0)
-            print("Columnas cargadas:", self.df.columns)
+            # Renombrar columnas para corregir encabezados mal formateados
+            self.df.columns = self.df.iloc[0]  # Usar la primera fila como encabezado
+            self.df = self.df[1:]  # Eliminar la fila que se usó como encabezado
+            self.df.columns = self.df.columns.str.strip()  # Quitar espacios en blanco
+
+            print("Columnas cargadas y corregidas:", self.df.columns)
         except Exception as e:
             print(f"Error al cargar el archivo CSV: {e}")
             raise
@@ -35,11 +40,21 @@ class StockManagementSystem:
             # Eliminación de filas completamente vacías y reseteo de índices
             self.df = self.df.dropna(how='all').reset_index(drop=True)
             self.df = self.df[self.df['COD_ART'] != 'Total general']
-            self.df['Cj/H'] = pd.to_numeric(self.df['Cj/H'], errors='coerce')
-            self.df['Disponible'] = pd.to_numeric(self.df['Disponible'], errors='coerce')
-            self.df['Calidad'] = pd.to_numeric(self.df['Calidad'], errors='coerce')
-            self.df['Stock Externo'] = self.df['Stock Externo'].replace('(en blanco)', '0')
-            self.df['Stock Externo'] = pd.to_numeric(self.df['Stock Externo'], errors='coerce')
+
+            # Convertir columnas relevantes a valores numéricos
+            num_columns = ['Cj/H', 'Disponible', 'Calidad', 'Stock Externo', 
+                        'M_Vta -15', 'M_Vta -15 AA']
+            for col in num_columns:
+                self.df[col] = self.df[col].replace({',': '.'}, regex=True)  # Reemplazar comas por puntos decimales
+                self.df[col] = pd.to_numeric(self.df[col], errors='coerce')
+
+            # Reemplazar valores nulos en las columnas clave con valores predeterminados
+            self.df['Cj/H'] = self.df['Cj/H'].fillna(1)  # Producción mínima de 1 caja/hora si está vacío
+            self.df['Disponible'] = self.df['Disponible'].fillna(0)
+            self.df['Calidad'] = self.df['Calidad'].fillna(0)
+            self.df['Stock Externo'] = self.df['Stock Externo'].fillna(0)
+            self.df['M_Vta -15'] = self.df['M_Vta -15'].fillna(0)
+            self.df['M_Vta -15 AA'] = self.df['M_Vta -15 AA'].fillna(1)  # Evitar divisiones por 0
 
             # Calcular el stock total
             self.df['STOCK_TOTAL'] = (
@@ -50,13 +65,17 @@ class StockManagementSystem:
 
             # Calcular la estimación de demanda basada en el histórico
             self._calculate_demand_estimation()
+
+            # Verificar y reemplazar nulos adicionales después de todos los cálculos
+            self.df.fillna(0, inplace=True)
         except KeyError as e:
             print(f"Error en las columnas del DataFrame: {e}")
             raise
         except Exception as e:
             print(f"Error al limpiar los datos: {e}")
             raise
-        
+
+
     def _calculate_demand_estimation(self):
         """
         Calcular la estimación de demanda considerando datos históricos y tendencias
@@ -82,11 +101,11 @@ class StockManagementSystem:
             raise
 
     def optimize_production(
-        self, 
-        available_hours: float, 
-        maintenance_hours: float,
-        pending_orders: Dict[str, float] = None
-    ) -> pd.DataFrame:
+    self, 
+    available_hours: float, 
+    maintenance_hours: float,
+    pending_orders: Dict[str, float] = None
+) -> pd.DataFrame:
         """
         Optimizar la producción usando programación lineal con restricciones mejoradas
         
@@ -96,6 +115,14 @@ class StockManagementSystem:
         :return: Plan de producción optimizado
         """
         try:
+            # Asegurarnos de que las columnas clave no tengan valores nulos
+            self.df['Cj/H'] = self.df['Cj/H'].fillna(1)
+            self.df['STOCK_TOTAL'] = self.df['STOCK_TOTAL'].fillna(0)
+            self.df['DEMANDA_MEDIA'] = self.df['DEMANDA_MEDIA'].fillna(0)
+
+            # Filtrar filas con valores inválidos para evitar errores
+            self.df = self.df[(self.df['Cj/H'] > 0) & (self.df['Cj/H'].notna())]
+
             # Ajustar las horas disponibles para el mantenimiento
             net_hours = available_hours - maintenance_hours
 
@@ -105,14 +132,14 @@ class StockManagementSystem:
             demand = self.df['DEMANDA_MEDIA'].values
 
             # Objetivo: Minimizar el déficit de inventario
-            c = -1 * (demand - current_stock)
+            c = -1 * np.maximum(demand - current_stock, 0)  # Garantizar que no haya valores negativos
 
             # Matriz de restricciones
             A_ub = []
             b_ub = []
 
             # 1. Restricción de horas totales de producción
-            A_ub.append(1/production_rates)
+            A_ub.append(1 / np.where(production_rates == 0, 1, production_rates))  # Evitar divisiones por 0
             b_ub.append(net_hours)
 
             # 2. Restricción de horas mínimas de producción
@@ -153,13 +180,15 @@ class StockManagementSystem:
             # Crear un DataFrame con el plan de producción
             production_plan = self.df.copy()
             production_plan['CAJAS_PRODUCIR'] = result.x
-            production_plan['HORAS_PRODUCCION'] = result.x / production_plan['Cj/H']
+            production_plan['HORAS_PRODUCCION'] = np.divide(result.x, production_plan['Cj/H'], 
+                                                            out=np.zeros_like(result.x), 
+                                                            where=production_plan['Cj/H'] > 0)
 
             # Calcular las penalizaciones por cambios de producción
             production_plan['CAMBIOS_PRODUCTO'] = (production_plan['CAJAS_PRODUCIR'] > 0).astype(int)
             production_plan['PENALIZACION_CAMBIO'] = (
                 production_plan['CAMBIOS_PRODUCTO'] * self.PRODUCTION_CHANGE_PENALTY_ART +
-                (production_plan['CAMBIOS_PRODUCTO'].diff() != 0) * self.PRODUCTION_CHANGE_PENALTY_GROUP
+                (production_plan['CAMBIOS_PRODUCTO'].diff().fillna(0) != 0) * self.PRODUCTION_CHANGE_PENALTY_GROUP
             )
 
             return production_plan
@@ -180,7 +209,7 @@ class StockManagementSystem:
         try:
             report = {
                 'total_production': production_plan['CAJAS_PRODUCIR'].sum(),
-                'total_hours': production_plan['HORAS_PRODUCCION'].sum(),
+                                'total_hours': production_plan['HORAS_PRODUCCION'].sum(),
                 'product_changes': production_plan['CAMBIOS_PRODUCTO'].sum(),
                 'total_change_penalty': production_plan['PENALIZACION_CAMBIO'].sum(),
                 'products_to_produce': production_plan[
@@ -223,11 +252,29 @@ class StockManagementSystem:
 
 if __name__ == "__main__":
     # Ruta al archivo CSV en la raíz del proyecto
-    file_path = "stock_data.csv"
+    data_path = "stock_data.csv"
 
-try:
-    stock_data = pd.read_csv(file_path, sep=';', encoding='latin1', skiprows=3)
-    print("Columnas cargadas:", stock_data.columns)
-    print(stock_data.head())
-except Exception as e:
-    print(f"Error al cargar el archivo: {e}")
+    try:
+        # Crear una instancia del sistema
+        system = StockManagementSystem(data_path)
+
+        # Definir parámetros de prueba
+        available_hours = 100  # Horas totales disponibles para producción
+        maintenance_hours = 5  # Horas destinadas al mantenimiento
+        pending_orders = {
+            "244719": 50,  # Código de producto con cantidad pendiente
+            "274756": 30
+        }
+
+        # Optimizar la producción
+        production_plan = system.optimize_production(available_hours, maintenance_hours, pending_orders)
+
+        # Generar y mostrar el informe de producción
+        report = system.generate_production_report(production_plan)
+
+        # Mostrar tabla resumen
+        system.display_summary_table(production_plan)
+
+    except Exception as e:
+        print(f"Error durante la ejecución: {e}")
+
