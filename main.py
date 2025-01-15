@@ -263,7 +263,7 @@ class SistemaStock:
 
             # Entrenar modelo
             X = self.modelo.preparar_caracteristicas(df_procesado)
-            y = df_procesado['M_VTA -15']
+            y = df_procesado['M_Vta -15']
             self.modelo.entrenar(X, y)
 
             # Actualizar estado

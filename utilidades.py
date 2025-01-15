@@ -91,9 +91,9 @@ class Utilidades:
             # Renombrar columnas para cumplir con los requisitos del sistema
             columnas_mapeo = {
                 'Cj/H': 'Cj/H',
-                'Disponible': 'DISPONIBLE',
-                'Calidad': 'CALIDAD',
-                'Stock Externo': 'STOCK EXTERNO',
+                'Disponible': 'Disponible',
+                'Calidad': 'Calidad',
+                'Stock Externo': 'Stock Externo',
                 'VTA -15': 'VTA_-15',
                 'M_Vta -15': 'M_Vta -15'
             }
@@ -104,11 +104,11 @@ class Utilidades:
             # Asegurar que se mantengan las columnas necesarias
             columnas_necesarias = [
                 'COD_ART', 'NOM_ART', 'COD_GRU', 
-                'Cj/H', 'DISPONIBLE', 'CALIDAD', 'STOCK EXTERNO'
+                'Cj/H', 'Disponible', 'Calidad', 'Stock Externo'
             ]
             
             # Calcular métricas adicionales
-            df['STOCK_TOTAL'] = df['DISPONIBLE'] + df['CALIDAD'] + df['STOCK EXTERNO']
+            df['STOCK_TOTAL'] = df['Disponible'] + df['Calidad'] + df['Stock Externo']
             
             # Calcular días de cobertura
             df['DIAS_COBERTURA'] = np.where(
@@ -128,7 +128,7 @@ class Utilidades:
         try:
             columnas_requeridas = [
                 'COD_ART', 'NOM_ART', 'COD_GRU', 'Cj/H', 
-                'DISPONIBLE', 'CALIDAD', 'STOCK EXTERNO'
+                'Disponible', 'Calidad', 'Stock Externo'
             ]
 
             # Verificar columnas faltantes
