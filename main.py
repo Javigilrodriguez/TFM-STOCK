@@ -204,60 +204,68 @@ class SistemaStock:
     
     def cargar_datasets(self):
         """Carga todos los datasets de la carpeta seleccionada"""
-        carpeta = self.ruta_carpeta.get()
-        if not carpeta:
-            raise ValueError("Debe seleccionar una carpeta primero")
-        
-        datasets = []
-        archivos_validos = [f for f in os.listdir(carpeta) 
-                           if f.endswith(('.xlsx', '.xls', '.csv'))]
-        
-        for archivo in archivos_validos:
-            ruta_completa = os.path.join(carpeta, archivo)
-            try:
-                if archivo.endswith('.csv'):
-                    df = pd.read_csv(ruta_completa, sep=';', encoding='latin1')
-                else:
-                    df = self.utilidades.leer_excel(ruta_completa)
-                
-                if df is not None and not df.empty:
-                    datasets.append(df)
-                    print(f"Archivo cargado: {archivo}")
+        try:
+            carpeta = self.ruta_carpeta.get()
+            if not carpeta:
+                raise ValueError("Debe seleccionar una carpeta primero")
             
-            except Exception as e:
-                print(f"Error cargando {archivo}: {e}")
-                continue
-        
-        if not datasets:
-            raise ValueError("No se encontraron datos válidos en los archivos")
-        
-        df_combinado = pd.concat(datasets, ignore_index=True)
-        
-        print(f"\nColumnas encontradas:")
-        print(df_combinado.columns.tolist())
-        print(f"Total de registros: {len(df_combinado)}")
-        
-        return df_combinado
-    
+            datasets = []
+            archivos_validos = [
+                f for f in os.listdir(carpeta) 
+                if f.endswith('.csv') and f.startswith('Dataset')
+            ]
+            
+            print(f"Archivos encontrados: {archivos_validos}")
+            
+            for archivo in archivos_validos:
+                ruta_completa = os.path.join(carpeta, archivo)
+                try:
+                    # Usar el método de la clase Utilidades
+                    df = self.utilidades.leer_csv(ruta_completa)
+                    
+                    if not df.empty:
+                        datasets.append(df)
+                        print(f"Archivo cargado: {archivo}")
+                
+                except Exception as e:
+                    print(f"Error cargando {archivo}: {e}")
+                    continue
+            
+            if not datasets:
+                raise ValueError("No se encontraron datos válidos en los archivos")
+            
+            # Combinar todos los DataFrames
+            df_combinado = pd.concat(datasets, ignore_index=True)
+            
+            print(f"\nColumnas encontradas:")
+            print(df_combinado.columns.tolist())
+            print(f"Total de registros: {len(df_combinado)}")
+            
+            return df_combinado
+
+        except Exception as e:
+            print(f"Error en cargar_datasets: {e}")
+            raise
+
     def entrenar_modelo(self):
-        """Entrena el modelo con los datos seleccionados"""
+        """Entrena el modelo con los datos seleccionados."""
         try:
             if not self.ruta_carpeta.get():
                 messagebox.showerror("Error", "Seleccione una carpeta primero")
                 return
-            
+
             # Cargar y procesar datos
             df_combinado = self.cargar_datasets()
             df_procesado = self.utilidades.procesar_datos(df_combinado)
-            
+
             if not self.utilidades.validar_datos(df_procesado):
                 raise ValueError("Los datos no cumplen con los requisitos mínimos")
-            
+
             # Entrenar modelo
             X = self.modelo.preparar_caracteristicas(df_procesado)
-            y = df_procesado['M_Vta -15']
+            y = df_procesado['M_VTA -15']
             self.modelo.entrenar(X, y)
-            
+
             # Actualizar estado
             modelos = self.modelo.listar_modelos()
             if modelos:
@@ -266,13 +274,13 @@ class SistemaStock:
                     f"Modelo cargado: {modelo_actual['nombre']} "
                     f"(Fecha: {modelo_actual['fecha']})"
                 )
-            
+
             self.modelo_entrenado = True
             messagebox.showinfo("Éxito", "Modelo entrenado y guardado correctamente")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error en entrenamiento: {str(e)}")
-    
+
     def optimizar_produccion(self):
         """Realiza la optimización de la producción"""
         if not self.modelo_entrenado:

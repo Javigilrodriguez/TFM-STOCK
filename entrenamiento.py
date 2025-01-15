@@ -34,39 +34,64 @@ class ModeloEntrenamiento:
         # Cargar modelo si existe
         self.cargar_modelo()
         
-    def cargar_dataset_multiple(self, ruta_directorio: str) -> pd.DataFrame:
-        """
-        Carga múltiples archivos CSV/Excel de un directorio para entrenamiento
+    def cargar_datasets(self):
+        """Carga todos los datasets de la carpeta seleccionada"""
+        carpeta = self.ruta_carpeta.get()
+        if not carpeta:
+            raise ValueError("Debe seleccionar una carpeta primero")
         
-        Args:
-            ruta_directorio: Ruta al directorio con archivos de datos
-            
-        Returns:
-            DataFrame combinado con todos los datos
-        """
-        datos_combinados = []
+        datasets = []
+        archivos_validos = [f for f in os.listdir(carpeta) 
+                           if f.endswith(('.xlsx', '.xls', '.csv'))]
         
-        for archivo in os.listdir(ruta_directorio):
-            if archivo.endswith(('.csv', '.xlsx', '.xls')):
-                ruta_completa = os.path.join(ruta_directorio, archivo)
-                try:
-                    if archivo.endswith('.csv'):
-                        df = pd.read_csv(ruta_completa, sep=';', encoding='latin1')
-                    else:
-                        df = pd.read_excel(ruta_completa)
-                    
-                    # Agregar metadatos temporales
-                    df['fecha_archivo'] = os.path.getctime(ruta_completa)
-                    datos_combinados.append(df)
-                    
-                except Exception as e:
-                    print(f"Error cargando {archivo}: {e}")
+        for archivo in archivos_validos:
+            ruta_completa = os.path.join(carpeta, archivo)
+            try:
+                # Leer el archivo CSV
+                with open(ruta_completa, 'r', encoding='cp1252') as f:
+                    lineas = f.readlines()
+                
+                # Encontrar la línea que contiene los encabezados
+                indice_headers = -1
+                for i, linea in enumerate(lineas):
+                    if 'COD_ART;NOM_ART;COD_GRU' in linea:
+                        indice_headers = i
+                        break
+                
+                if indice_headers == -1:
+                    print(f"No se encontraron encabezados en {archivo}")
                     continue
-        
-        if not datos_combinados:
-            raise ValueError("No se encontraron archivos válidos en el directorio")
+                
+                # Crear un nuevo archivo temporal con solo los datos relevantes
+                temp_file = os.path.join(os.path.dirname(ruta_completa), f'temp_{archivo}')
+                with open(temp_file, 'w', encoding='cp1252') as f:
+                    f.writelines(lineas[indice_headers:])
+                
+                # Leer el archivo temporal con pandas
+                df = pd.read_csv(temp_file, sep=';', encoding='cp1252')
+                
+                # Eliminar el archivo temporal
+                os.remove(temp_file)
+                
+                if not df.empty:
+                    datasets.append(df)
+                    print(f"Archivo cargado: {archivo}")
             
-        return pd.concat(datos_combinados, ignore_index=True)
+            except Exception as e:
+                print(f"Error cargando {archivo}: {e}")
+                continue
+        
+        if not datasets:
+            raise ValueError("No se encontraron datos válidos en los archivos")
+        
+        # Combinar todos los datasets
+        df_combinado = pd.concat(datasets, ignore_index=True)
+        
+        print(f"\nColumnas encontradas:")
+        print(df_combinado.columns.tolist())
+        print(f"Total de registros: {len(df_combinado)}")
+        
+        return df_combinado
 
     def analizar_patrones_temporales(self, df: pd.DataFrame) -> Dict:
         """
@@ -196,45 +221,66 @@ class ModeloEntrenamiento:
 
     def preparar_caracteristicas(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Prepara características incluyendo información temporal
-        
+        Prepara las características para el modelo considerando decimales con coma
+
         Args:
-            df: DataFrame con datos
-            
+            df: DataFrame con los datos
+
         Returns:
-            DataFrame con características preparadas
+            DataFrame con las características preparadas
         """
-        caracteristicas = pd.DataFrame()
-        
-        # Características base del modelo original
-        caracteristicas['venta_anterior'] = df['M_Vta -15']
-        caracteristicas['venta_anterior_anual'] = df['M_Vta -15 AA']
-        caracteristicas['stock_total'] = (df['Disponible'] + 
-                                        df['Calidad'] + 
-                                        df['Stock Externo'])
-        
-        # Características derivadas
-        caracteristicas['ratio_venta'] = df['M_Vta -15'] / df['M_Vta -15 AA']
-        caracteristicas['dias_cobertura'] = caracteristicas['stock_total'] / (
-            df['M_Vta -15'] / 15)
-        
-        # Características temporales mejoradas
-        fecha_actual = datetime.now()
-        caracteristicas['mes'] = fecha_actual.month
-        caracteristicas['es_temporada_alta'] = caracteristicas['mes'].apply(
-            lambda x: 1 if x in self.patrones_temporales.get('meses_alta_demanda', []) 
-            else 0)
-        
-        # Características específicas por producto
-        caracteristicas['es_producto_estacional'] = df['COD_ART'].apply(
-            lambda x: 1 if x in self.patrones_temporales.get(
-                'productos_estacionales', {}) else 0)
-        
-        # Limpiar datos
-        caracteristicas = caracteristicas.replace([np.inf, -np.inf], np.nan)
-        caracteristicas = caracteristicas.fillna(caracteristicas.mean())
-        
-        return caracteristicas
+        try:
+            def convertir_valor(valor):
+                """Convierte valores con coma decimal a float"""
+                if isinstance(valor, str):
+                    # Reemplazar coma por punto, quitar espacios y miles
+                    valor = valor.replace(',', '.').replace('.', '', valor.count('.')-1).replace(' ', '')
+                try:
+                    return float(valor)
+                except (ValueError, TypeError):
+                    return 0.0
+
+            # Preparar características
+            caracteristicas = pd.DataFrame()
+            
+            # Convertir columnas específicas, manejando separador decimal
+            caracteristicas['venta_actual'] = df['M_Vta -15'].apply(convertir_valor)
+            caracteristicas['venta_anterior'] = df['M_Vta -15 AA'].apply(convertir_valor)
+            
+            # Convertir columnas de stock, manejando valores en blanco o nulos
+            caracteristicas['stock_total'] = (
+                df['Disponible'].apply(convertir_valor) + 
+                df['Calidad'].apply(convertir_valor) + 
+                df['Stock Externo'].apply(convertir_valor)
+            )
+            
+            # Características derivadas con manejo de conversión
+            caracteristicas['dias_cobertura'] = np.where(
+                caracteristicas['venta_actual'] > 0,
+                caracteristicas['stock_total'] / caracteristicas['venta_actual'],
+                0
+            )
+            
+            caracteristicas['ratio_venta'] = np.where(
+                caracteristicas['venta_anterior'] > 0,
+                caracteristicas['venta_actual'] / caracteristicas['venta_anterior'],
+                1
+            )
+            
+            # Limpiar datos
+            caracteristicas = caracteristicas.fillna(0)
+            caracteristicas = caracteristicas.replace([np.inf, -np.inf], 0)
+            
+            # Guardar nombres de características
+            self.features = caracteristicas.columns.tolist()
+            
+            return caracteristicas
+            
+        except Exception as e:
+            print(f"Error preparando características de modelo: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def entrenar(self, X: pd.DataFrame, y: pd.Series):
         """
@@ -275,27 +321,46 @@ class ModeloEntrenamiento:
 
     def predecir(self, X: pd.DataFrame) -> np.ndarray:
         """
-        Realiza predicciones usando el modelo actual
-        
+        Realiza predicciones usando el modelo
+
         Args:
             X: Características para predicción
-            
+
         Returns:
             Array con predicciones
         """
-        try:
-            X_scaled = self.scaler.transform(X)
-            predicciones = self.modelo.predict(X_scaled)
+        if not self.modelo_cargado:
+            raise ValueError("No hay modelo válido cargado. Por favor, entrene o cargue un modelo primero.")
             
-            # Ajustar predicciones según patrones temporales
-            mes_actual = datetime.now().month
-            if mes_actual in self.patrones_temporales.get('meses_alta_demanda', []):
-                predicciones *= 1.2  # Incrementar 20% en temporada alta
-            elif mes_actual in self.patrones_temporales.get('meses_baja_demanda', []):
-                predicciones *= 0.8  # Reducir 20% en temporada baja
-                
-            return np.maximum(0, predicciones)  # No permitir predicciones negativas
+        try:
+            # Función auxiliar para convertir valores con coma decimal
+            def convertir_valor(valor):
+                if isinstance(valor, str):
+                    # Reemplazar coma por punto y quitar espacios
+                    valor = valor.replace(',', '.').replace(' ', '')
+                try:
+                    return float(valor)
+                except (ValueError, TypeError):
+                    return 0.0
+
+            # Aplicar conversión a todas las columnas
+            X_converted = X.copy()
+            for col in X.columns:
+                X_converted[col] = X_converted[col].apply(convertir_valor)
+            
+            # Limpiar datos de entrada
+            X_converted = X_converted.fillna(0)
+            X_converted = X_converted.replace([np.inf, -np.inf], 0)
+            
+            predicciones = self.modelo.predict(X_converted)
+            
+            # Asegurar valores no negativos y redondear hacia arriba
+            predicciones = np.ceil(np.maximum(predicciones, 0))
+            
+            return predicciones.astype(int)
             
         except Exception as e:
             print(f"Error en predicción: {e}")
+            import traceback
+            traceback.print_exc()
             raise

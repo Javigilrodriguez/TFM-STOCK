@@ -174,7 +174,7 @@ class ModeloPrediccion:
     
     def preparar_caracteristicas(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Prepara las características para el modelo
+        Prepara las características para el modelo considerando decimales con coma
 
         Args:
             df: DataFrame con los datos
@@ -183,15 +183,25 @@ class ModeloPrediccion:
             DataFrame con las características preparadas
         """
         try:
+            def convertir_valor(valor):
+                """Convierte valores con coma decimal a float"""
+                if isinstance(valor, str):
+                    # Reemplazar coma por punto, quitar espacios y miles
+                    valor = valor.replace(',', '.').replace('.', '', valor.count('.')-1).replace(' ', '')
+                try:
+                    return float(valor)
+                except (ValueError, TypeError):
+                    return 0.0
+
             caracteristicas = pd.DataFrame()
             
-            # Características base
-            caracteristicas['venta_actual'] = df['M_Vta -15'].astype(float)
-            caracteristicas['venta_anterior'] = df['M_Vta -15 AA'].astype(float)
+            # Características base con conversión de valores
+            caracteristicas['venta_actual'] = df['M_Vta -15'].apply(convertir_valor)
+            caracteristicas['venta_anterior'] = df['M_Vta -15 AA'].apply(convertir_valor)
             caracteristicas['stock_total'] = (
-                df['Disponible'].astype(float) + 
-                df['Calidad'].astype(float) + 
-                df['Stock Externo'].astype(float)
+                df['Disponible'].apply(convertir_valor) + 
+                df['Calidad'].apply(convertir_valor) + 
+                df['Stock Externo'].apply(convertir_valor)
             )
             
             # Características derivadas
@@ -217,7 +227,7 @@ class ModeloPrediccion:
             return caracteristicas
             
         except Exception as e:
-            print(f"Error preparando características: {e}")
+            print(f"Error preparando características de modelo: {e}")
             raise
     
     def entrenar(self, X: pd.DataFrame, y: pd.Series):

@@ -1,171 +1,148 @@
 import pandas as pd
 import numpy as np
+import os
+import re
 
 class Utilidades:
     def __init__(self):
         pass
 
-    def leer_excel(self, ruta_archivo):
-        """Lee archivo Excel con manejo específico para cada tipo de archivo"""
-        try:
-            # Determinar si es un archivo de planning o dataset
-            if 'planning' in ruta_archivo.lower():
-                return self._leer_planning(ruta_archivo)
-            else:
-                return self._leer_dataset(ruta_archivo)
-        except Exception as e:
-            print(f"Error leyendo Excel {ruta_archivo}: {e}")
-            raise
-
-    def _leer_dataset(self, ruta_archivo):
-        """Lee archivos de dataset con estructura específica"""
-        try:
-            # Leer primeras filas para analizar estructura
-            df = pd.read_excel(ruta_archivo, nrows=5)
-            
-            # Verificar si tenemos las filas correctas
-            if 'Fecha' in df.columns:
-                # Leer el archivo completo saltando las filas de encabezado
-                df = pd.read_excel(ruta_archivo, skiprows=5)
-                
-                # Asignar nombres de columnas correctos
-                nombres_columnas = [
-                    'COD_ART',        # Primera columna
-                    'NOMBRE',         # Segunda columna
-                    'Cj/H',          # Cajas por hora
-                    'Disponible',     # Stock disponible
-                    'Calidad',        # Stock en calidad
-                    'Stock Externo',  # Stock externo
-                    'M_Vta -15',      # Ventas últimos 15 días
-                    'M_Vta -15 AA'    # Ventas año anterior
-                ]
-                
-                # Asignar nombres solo a las columnas que necesitamos
-                if len(df.columns) >= len(nombres_columnas):
-                    df = df.iloc[:, :len(nombres_columnas)]
-                    df.columns = nombres_columnas
-                else:
-                    df.columns = nombres_columnas[:len(df.columns)]
-                
-                # Eliminar filas que no tienen código de artículo
-                df = df.dropna(subset=[df.columns[0]])
-                
-                return df
-            else:
-                raise ValueError("Estructura de archivo no reconocida")
-                
-        except Exception as e:
-            print(f"Error en lectura de dataset: {e}")
-            raise
-
-    def _leer_planning(self, ruta_archivo):
-        """Lee archivo de planning con estructura específica"""
-        try:
-            df = pd.read_excel(ruta_archivo)
-            
-            # Restructurar el planning para formato estándar
-            columnas_por_dia = ['H', 'CJ', 'Cob', 'Línea']
-            dias = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sábado']
-            
-            planning_procesado = pd.DataFrame()
-            
-            # Procesar cada día
-            for dia in dias:
-                dia_data = df[df.iloc[:, 1] == dia].copy()
-                if not dia_data.empty:
-                    dia_data = dia_data.iloc[:, :len(columnas_por_dia)]
-                    dia_data.columns = columnas_por_dia
-                    dia_data['DIA'] = dia
-                    planning_procesado = pd.concat([planning_procesado, dia_data])
-            
-            return planning_procesado
-            
-        except Exception as e:
-            print(f"Error en lectura de planning: {e}")
-            raise
-
-    def procesar_datos(self, df):
+    def limpiar_nombre_columna(self, nombre):
         """
-        Limpia y prepara los datos para el análisis.
-        Redondea hacia arriba los valores numéricos.
+        Limpia y normaliza el nombre de una columna
+        - Elimina caracteres especiales
+        - Convierte a mayúsculas
+        - Quita espacios
         """
+        limpio = re.sub(r'[/\-_]', '', nombre.upper().strip())
+        return limpio
+
+    def leer_csv(self, ruta_archivo):
+        """Lee y procesa un archivo CSV con estructura compleja."""
         try:
-            # Eliminar filas completamente vacías
-            df = df.dropna(how='all')
+            # Leer todas las líneas del archivo
+            with open(ruta_archivo, 'r', encoding='cp1252') as f:
+                lineas = f.readlines()
             
-            # Convertir columnas numéricas y redondear hacia arriba
+            # Encontrar el índice de la línea con COD_ART
+            indice_encabezados = None
+            for i, linea in enumerate(lineas):
+                if 'COD_ART' in linea:
+                    indice_encabezados = i
+                    break
+            
+            if indice_encabezados is None:
+                raise ValueError("No se encontró la línea de encabezados con COD_ART")
+            
+            # Leer el DataFrame desde la línea de encabezados
+            df = pd.read_csv(
+                ruta_archivo, 
+                sep=';', 
+                encoding='cp1252', 
+                header=indice_encabezados,  # Use the line with headers
+                skip_blank_lines=True,
+                dtype=str  # Read everything as string initially
+            )
+            
+            # Columnas requeridas con sus posibles variantes
+            df.columns = [col.strip() for col in df.columns]  # Remove any whitespace
+            
+            # Convertir columnas numéricas con manejo de valores especiales
             columnas_numericas = [
-                'Cj/H', 'Disponible', 'Calidad', 
-                'Stock Externo', 'M_Vta -15', 'M_Vta -15 AA'
+                'Cj/H', 'Disponible', 'Calidad', 'Stock Externo', 
+                'VTA -15', 'M_Vta -15'
             ]
             
             for col in columnas_numericas:
                 if col in df.columns:
-                    # Convertir a numérico, manteniendo NaN
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                    # Redondear hacia arriba y convertir a entero
-                    df[col] = df[col].apply(lambda x: int(np.ceil(x)) if pd.notnull(x) else x)
-            
-            # Valores por defecto
-            valores_default = {
-                'Cj/H': 1,
-                'Disponible': 0,
-                'Calidad': 0,
-                'Stock Externo': 0,
-                'M_Vta -15': 0,
-                'M_Vta -15 AA': 1
-            }
-            df = df.fillna(valores_default)
-            
-            # Stock total como suma de los stocks (ya redondeados)
-            df['STOCK_TOTAL'] = (df['Disponible'] + 
-                               df['Calidad'] + 
-                               df['Stock Externo']).astype(int)
-            
-            # Días de cobertura redondeados hacia arriba
-            venta_diaria = np.where(df['M_Vta -15'] > 0, df['M_Vta -15'] / 15, 1)
-            df['DIAS_COBERTURA'] = (df['STOCK_TOTAL'] / venta_diaria).apply(
-                lambda x: int(np.ceil(x)) if x != np.inf else 30
-            )
-            
-            # Asegurar que todos los valores numéricos sean enteros
-            columnas_a_entero = columnas_numericas + ['STOCK_TOTAL', 'DIAS_COBERTURA']
-            for col in columnas_a_entero:
-                if col in df.columns:
-                    df[col] = df[col].astype(int)
-            
-            print("\nEjemplo de datos procesados:")
-            print(df[columnas_a_entero].head())
+                    df[col] = (
+                        df[col]
+                        .replace('(en blanco)', '0')
+                        .str.replace(',', '.')  # Replace comma with dot for decimal
+                        .str.replace(' ', '')   # Remove spaces
+                    )
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
             return df
+        
+        except Exception as e:
+            print(f"Error procesando archivo {ruta_archivo}: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+
+    def procesar_datos(self, datos):
+        """
+        Procesa datos de un DataFrame o de un archivo dado.
+        """
+        try:
+            # Si la entrada es una ruta de archivo
+            if isinstance(datos, str):
+                if datos.endswith('.csv'):
+                    df = self.leer_csv(datos)
+                else:
+                    raise ValueError("Formato de archivo no soportado. Use CSV.")
+            # Si la entrada ya es un DataFrame
+            elif isinstance(datos, pd.DataFrame):
+                df = datos
+            else:
+                raise ValueError("El argumento debe ser una ruta de archivo o un DataFrame.")
+
+            # Renombrar columnas para cumplir con los requisitos del sistema
+            columnas_mapeo = {
+                'Cj/H': 'Cj/H',
+                'Disponible': 'DISPONIBLE',
+                'Calidad': 'CALIDAD',
+                'Stock Externo': 'STOCK EXTERNO',
+                'VTA -15': 'VTA_-15',
+                'M_Vta -15': 'M_Vta -15'
+            }
             
+            # Renombrar columnas
+            df.rename(columns=columnas_mapeo, inplace=True)
+            
+            # Asegurar que se mantengan las columnas necesarias
+            columnas_necesarias = [
+                'COD_ART', 'NOM_ART', 'COD_GRU', 
+                'Cj/H', 'DISPONIBLE', 'CALIDAD', 'STOCK EXTERNO'
+            ]
+            
+            # Calcular métricas adicionales
+            df['STOCK_TOTAL'] = df['DISPONIBLE'] + df['CALIDAD'] + df['STOCK EXTERNO']
+            
+            # Calcular días de cobertura
+            df['DIAS_COBERTURA'] = np.where(
+                df['M_Vta -15'] > 0,
+                df['STOCK_TOTAL'] / df['M_Vta -15'],
+                float('inf')
+            )
+
+            return df
+
         except Exception as e:
             print(f"Error procesando datos: {e}")
-            print(f"Columnas disponibles: {df.columns.tolist()}")
             raise
 
     def validar_datos(self, df):
-        """Verifica que los datos cumplan con los requisitos mínimos"""
+        """Valida que el DataFrame cumpla con los requisitos mínimos."""
         try:
-            # Verificar columnas requeridas
             columnas_requeridas = [
-                'COD_ART', 'Cj/H', 'Disponible', 'Calidad', 
-                'Stock Externo', 'M_Vta -15', 'M_Vta -15 AA'
+                'COD_ART', 'NOM_ART', 'COD_GRU', 'Cj/H', 
+                'DISPONIBLE', 'CALIDAD', 'STOCK EXTERNO'
             ]
-            
+
+            # Verificar columnas faltantes
             faltantes = [col for col in columnas_requeridas if col not in df.columns]
             if faltantes:
                 print(f"Faltan columnas requeridas: {faltantes}")
-                print("Columnas disponibles:", df.columns.tolist())
                 return False
-            
-            # Verificar que hay datos válidos
-            if len(df) == 0:
-                print("El dataset está vacío")
+
+            # Verificar si el DataFrame está vacío
+            if df.empty:
+                print("El DataFrame está vacío.")
                 return False
-            
+
             return True
-            
         except Exception as e:
-            print(f"Error en validación: {e}")
+            print(f"Error validando datos: {e}")
             return False
