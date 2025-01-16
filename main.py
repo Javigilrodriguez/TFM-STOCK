@@ -1,41 +1,46 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from tkcalendar import Calendar
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import plotly.io as pio
+from PIL import Image, ImageTk
+import io
+from typing import Optional
 import os
-import json
-from pathlib import Path
 
 from modelo import ModeloPrediccion
 from optimizador import Optimizador
 from utilidades import Utilidades
-from calendario import CalendarioProduccion
 
 class SistemaStock:
     def __init__(self, root):
-        """Inicializa la aplicación"""
         self.root = root
         self.root.title("Sistema de Planificación de Producción")
-        self.root.geometry("800x800")
+        self.root.geometry("1024x768")
+        
+        # Configurar canvas scrollable
+        self.main_canvas = tk.Canvas(root)
+        self.scrollbar = ttk.Scrollbar(root, orient="vertical", command=self.main_canvas.yview)
+        self.scrollable_frame = ttk.Frame(self.main_canvas)
+        
+        # Configurar scroll
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+        )
+        self.main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        self.main_canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        # Bind mousewheel
+        self.root.bind("<MouseWheel>", self._on_mousewheel)
         
         # Variables de control
         self.ruta_carpeta = tk.StringVar()
         self.modelo_cargado = tk.StringVar(value="Estado: No hay modelo cargado")
-        self.modelo_entrenado = False
+        self.usar_prediccion = tk.BooleanVar(value=False)
         
-        # Calendario y fechas
-        self.calendario = CalendarioProduccion()
-        self.fecha_inicio = tk.StringVar()
-        self.fecha_fin = tk.StringVar()
-        
-        # Inicializar con fechas por defecto
-        fecha_actual = datetime.now()
-        self.fecha_inicio.set(fecha_actual.strftime('%Y-%m-%d'))
-        self.fecha_fin.set((fecha_actual + timedelta(days=7)).strftime('%Y-%m-%d'))
-        
-        # Parámetros de producción
+        # Parámetros
         self.params = {
             'dias_stock_seguridad': tk.StringVar(value='3'),
             'horas_min_produccion': tk.StringVar(value='2'),
@@ -43,300 +48,225 @@ class SistemaStock:
             'horas_mantenimiento': tk.StringVar(value='5')
         }
         
-        # Inicializar componentes
+        # Componentes
         self.utilidades = Utilidades()
-        self.modelo = ModeloPrediccion()
         self.optimizador = None
-        
-        # Verificar si hay modelo guardado y actualizar estado
-        modelos = self.modelo.listar_modelos()
-        if modelos:
-            modelo_actual = modelos[0]
-            self.modelo_cargado.set(
-                f"Modelo cargado: {modelo_actual['nombre']} "
-                f"(Fecha: {modelo_actual['fecha']})"
-            )
-            self.modelo_entrenado = True
+        self.modelo = None
         
         # Crear interfaz
         self.crear_widgets()
-    
-    def crear_widgets(self):
-        """Crea la interfaz gráfica"""
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.configurar_layout()
         
-        # Estado del modelo
-        status_frame = ttk.LabelFrame(main_frame, text="Estado del Modelo", padding=10)
+    def _on_mousewheel(self, event):
+        """Maneja el scroll con la rueda del mouse"""
+        self.main_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+    def crear_widgets(self):
+        """Crea todos los widgets de la interfaz"""
+        # Frame principal con padding
+        main_frame = ttk.Frame(self.scrollable_frame, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Estado
+        status_frame = ttk.LabelFrame(main_frame, text="Estado del Sistema", padding="5")
         status_frame.pack(fill=tk.X, pady=5)
         ttk.Label(status_frame, textvariable=self.modelo_cargado).pack()
         
-        # Sección de selección de carpeta
-        folder_frame = ttk.LabelFrame(main_frame, text="Selección de Datos", padding=10)
-        folder_frame.pack(fill=tk.X, pady=5)
+        # Selección de datos
+        data_frame = ttk.LabelFrame(main_frame, text="Datos de Entrada", padding="5")
+        data_frame.pack(fill=tk.X, pady=5)
         
-        ttk.Label(folder_frame, textvariable=self.ruta_carpeta, width=50).pack(side=tk.LEFT, padx=5)
-        ttk.Button(folder_frame, text="Seleccionar Carpeta", 
-                  command=self.seleccionar_carpeta).pack(side=tk.LEFT, padx=5)
+        ttk.Label(data_frame, text="Carpeta de datos:").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(data_frame, textvariable=self.ruta_carpeta, width=50).pack(side=tk.LEFT, padx=5)
+        ttk.Button(data_frame, text="Examinar", command=self.seleccionar_carpeta).pack(side=tk.LEFT)
         
-        # Calendario y Fechas
-        calendar_frame = ttk.LabelFrame(main_frame, text="Calendario de Producción", padding=10)
-        calendar_frame.pack(fill=tk.X, pady=5)
-        
-        # Frame para fechas
-        dates_frame = ttk.Frame(calendar_frame)
-        dates_frame.pack(fill=tk.X, pady=5)
-        
-        # Fecha inicio
-        ttk.Label(dates_frame, text="Fecha Inicio:").pack(side=tk.LEFT, padx=5)
-        self.fecha_inicio_entry = ttk.Entry(dates_frame, textvariable=self.fecha_inicio, width=10)
-        self.fecha_inicio_entry.pack(side=tk.LEFT, padx=5)
-        ttk.Button(dates_frame, text="...", 
-                  command=lambda: self.seleccionar_fecha('inicio')).pack(side=tk.LEFT)
-        
-        # Fecha fin
-        ttk.Label(dates_frame, text="Fecha Fin:").pack(side=tk.LEFT, padx=5)
-        self.fecha_fin_entry = ttk.Entry(dates_frame, textvariable=self.fecha_fin, width=10)
-        self.fecha_fin_entry.pack(side=tk.LEFT, padx=5)
-        ttk.Button(dates_frame, text="...", 
-                  command=lambda: self.seleccionar_fecha('fin')).pack(side=tk.LEFT)
-        
-        # Calendario
-        self.calendar = Calendar(calendar_frame, selectmode='day', date_pattern='y-mm-dd')
-        self.calendar.pack(pady=5)
-        
-        # Configurar estilo del calendario
-        self.calendar.tag_config('working_day', background='lightgreen')
-        
-        # Botones de calendario
-        cal_buttons_frame = ttk.Frame(calendar_frame)
-        cal_buttons_frame.pack(fill=tk.X, pady=5)
-        
-        ttk.Button(cal_buttons_frame, text="Marcar como Hábil", 
-                  command=lambda: self.marcar_dia(True)).pack(side=tk.LEFT, padx=5)
-        ttk.Button(cal_buttons_frame, text="Marcar como No Hábil", 
-                  command=lambda: self.marcar_dia(False)).pack(side=tk.LEFT, padx=5)
-        
-        # Botón de entrenamiento
-        train_frame = ttk.LabelFrame(main_frame, text="Entrenamiento", padding=10)
-        train_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(train_frame, text="Entrenar Modelo", 
-                  command=self.entrenar_modelo).pack(pady=5)
-        
-        # Sección de parámetros
-        params_frame = ttk.LabelFrame(main_frame, text="Parámetros de Producción", padding=10)
+        # Parámetros
+        params_frame = ttk.LabelFrame(main_frame, text="Parámetros de Optimización", padding="5")
         params_frame.pack(fill=tk.X, pady=5)
         
         for key, label in {
-            'dias_stock_seguridad': 'Días de Stock Seguridad',
-            'horas_min_produccion': 'Horas Mínimas Producción',
-            'horas_disponibles': 'Horas Disponibles',
-            'horas_mantenimiento': 'Horas Mantenimiento'
+            'dias_stock_seguridad': 'Días de stock seguridad:',
+            'horas_min_produccion': 'Horas mínimas producción:',
+            'horas_disponibles': 'Horas disponibles:',
+            'horas_mantenimiento': 'Horas mantenimiento:'
         }.items():
-            frame = ttk.Frame(params_frame)
-            frame.pack(fill=tk.X, pady=2)
-            ttk.Label(frame, text=label).pack(side=tk.LEFT)
-            ttk.Entry(frame, textvariable=self.params[key], width=10).pack(side=tk.RIGHT)
+            param_row = ttk.Frame(params_frame)
+            param_row.pack(fill=tk.X, pady=2)
+            ttk.Label(param_row, text=label, width=30).pack(side=tk.LEFT)
+            ttk.Entry(param_row, textvariable=self.params[key], width=10).pack(side=tk.LEFT)
+            
+        # Predicción
+        ttk.Checkbutton(
+            params_frame,
+            text="Usar predicción de demanda",
+            variable=self.usar_prediccion
+        ).pack(pady=5)
         
-        # Botón de optimización
-        optim_frame = ttk.LabelFrame(main_frame, text="Optimización", padding=10)
-        optim_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(optim_frame, text="Optimizar Producción", 
-                  command=self.optimizar_produccion).pack(pady=5)
+        # Acciones
+        actions_frame = ttk.LabelFrame(main_frame, text="Acciones", padding="5")
+        actions_frame.pack(fill=tk.X, pady=5)
         
-        # Cargar estado inicial del calendario
-        self.cargar_estado_calendario()
-    
-    def cargar_estado_calendario(self):
-        """Carga el estado guardado del calendario en la interfaz"""
-        # Limpiar todos los eventos existentes
-        self.calendar.calevent_remove("all")
+        btn_frame = ttk.Frame(actions_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
         
-        # Configurar el estilo para días hábiles
-        self.calendar.tag_config('working_day', background='lightgreen')
+        ttk.Button(btn_frame, text="Cargar Datos", 
+                  command=self.cargar_datos).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Entrenar Modelo", 
+                  command=self.entrenar_modelo).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Generar Planificación", 
+                  command=self.generar_planificacion).pack(side=tk.LEFT, padx=5)
         
-        # Cargar todos los días hábiles
-        for fecha_str, es_habil in self.calendario.dias_habiles.items():
-            if es_habil:
-                try:
-                    fecha = datetime.strptime(fecha_str, '%Y-%m-%d')
-                    self.calendar.calevent_create(fecha, 'Día Hábil', 'working_day')
-                except Exception as e:
-                    print(f"Error cargando fecha {fecha_str}: {e}")
-                    continue
-    
-    def marcar_dia(self, es_habil):
-        """Marca o desmarca un día como hábil"""
-        fecha = datetime.strptime(self.calendar.get_date(), '%Y-%m-%d')
-        fecha_str = fecha.strftime('%Y-%m-%d')
-        self.calendario.establecer_dia_habil(fecha, es_habil)
+        # Visualización
+        viz_frame = ttk.LabelFrame(main_frame, text="Visualización", padding="5")
+        viz_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        # Limpiar eventos solo para esta fecha específica
-        self.calendar.calevent_remove("all", fecha)
+        viz_buttons = ttk.Frame(viz_frame)
+        viz_buttons.pack(fill=tk.X, pady=5)
         
-        # Si es hábil, crear evento nuevo
-        if es_habil:
-            self.calendar.calevent_create(fecha, 'Día Hábil', 'working_day')
+        ttk.Button(viz_buttons, text="Ver Evolución", 
+                  command=self.mostrar_evolucion).pack(side=tk.LEFT, padx=5)
+        ttk.Button(viz_buttons, text="Comparar Stock", 
+                  command=self.mostrar_comparacion).pack(side=tk.LEFT, padx=5)
         
-        # Cargar todos los días hábiles
-        self.cargar_estado_calendario()
-    
-    def seleccionar_fecha(self, tipo):
-        """Abre un selector de fecha"""
-        def set_date():
-            if tipo == 'inicio':
-                self.fecha_inicio.set(cal.get_date())
-            else:
-                self.fecha_fin.set(cal.get_date())
-            top.destroy()
+        # Canvas para gráficos
+        self.grafico_canvas = tk.Canvas(viz_frame, height=400)
+        self.grafico_canvas.pack(fill=tk.BOTH, expand=True, pady=5)
         
-        top = tk.Toplevel(self.root)
-        cal = Calendar(top, selectmode='day', date_pattern='y-mm-dd')
-        cal.pack(padx=10, pady=10)
-        ttk.Button(top, text="Seleccionar", command=set_date).pack(pady=5)
-    
+    def configurar_layout(self):
+        """Configura el layout principal con scroll"""
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
     def seleccionar_carpeta(self):
-        """Permite al usuario seleccionar una carpeta con datasets"""
+        """Permite seleccionar la carpeta de datos"""
         carpeta = filedialog.askdirectory(title="Seleccionar Carpeta con Datasets")
         if carpeta:
             self.ruta_carpeta.set(carpeta)
-            messagebox.showinfo("Info", "Carpeta seleccionada. Puede proceder con el entrenamiento.")
-    
-    def cargar_datasets(self):
-        """Carga todos los datasets de la carpeta seleccionada"""
+            messagebox.showinfo("Info", "Carpeta seleccionada correctamente")
+            
+    def cargar_datos(self):
+        """Carga los datasets de la carpeta seleccionada"""
         try:
+            # Verificar si hay carpeta seleccionada
             carpeta = self.ruta_carpeta.get()
             if not carpeta:
-                raise ValueError("Debe seleccionar una carpeta primero")
+                messagebox.showwarning("Advertencia", 
+                    "Debe seleccionar una carpeta primero.\n\n"
+                    "Use el botón 'Examinar' para elegir la carpeta\n"
+                    "que contiene los archivos CSV")
+                return
             
-            datasets = []
-            archivos_validos = [
-                f for f in os.listdir(carpeta) 
-                if f.endswith('.csv') and f.startswith('Dataset')
-            ]
-            
-            print(f"Archivos encontrados: {archivos_validos}")
-            
-            for archivo in archivos_validos:
-                ruta_completa = os.path.join(carpeta, archivo)
-                try:
-                    # Usar el método de la clase Utilidades
-                    df = self.utilidades.leer_csv(ruta_completa)
-                    
-                    if not df.empty:
-                        datasets.append(df)
-                        print(f"Archivo cargado: {archivo}")
+            # Verificar si la carpeta existe
+            if not os.path.exists(carpeta):
+                messagebox.showerror("Error",
+                    f"La carpeta seleccionada no existe:\n{carpeta}\n\n"
+                    "Por favor, seleccione una carpeta válida.")
+                return
                 
-                except Exception as e:
-                    print(f"Error cargando {archivo}: {e}")
-                    continue
+            # Buscar archivos CSV en la carpeta
+            archivos_csv = [f for f in os.listdir(carpeta) 
+                        if f.lower().endswith('.csv')]
             
-            if not datasets:
-                raise ValueError("No se encontraron datos válidos en los archivos")
+            if not archivos_csv:
+                messagebox.showerror("Error",
+                    "No se encontraron archivos CSV en la carpeta.\n\n"
+                    "Asegúrese de que la carpeta contiene archivos .csv")
+                return
             
-            # Combinar todos los DataFrames
-            df_combinado = pd.concat(datasets, ignore_index=True)
+            # Usar utilidades para cargar datos
+            self.df_actual = self.utilidades.cargar_datasets(carpeta)
             
-            print(f"\nColumnas encontradas:")
-            print(df_combinado.columns.tolist())
-            print(f"Total de registros: {len(df_combinado)}")
+            if self.df_actual is not None and not self.df_actual.empty:
+                messagebox.showinfo("Éxito", 
+                    f"Datos cargados correctamente\n\n"
+                    f"Archivos procesados: {len(archivos_csv)}\n"
+                    f"Registros totales: {len(self.df_actual)}\n\n"
+                    f"Puede proceder a generar la planificación")
+            else:
+                messagebox.showerror("Error",
+                    "No se pudieron cargar los datos correctamente.\n"
+                    "Verifique que los archivos tienen el formato esperado.")
             
-            return df_combinado
-
         except Exception as e:
-            print(f"Error en cargar_datasets: {e}")
-            raise
-
+            messagebox.showerror("Error", 
+                f"Error cargando datos: {str(e)}\n\n"
+                "Verifique que los archivos tienen el formato correcto.")
+            
     def entrenar_modelo(self):
-        """Entrena el modelo con los datos seleccionados."""
+        """Entrena el modelo predictivo si está activado"""
         try:
-            if not self.ruta_carpeta.get():
-                messagebox.showerror("Error", "Seleccione una carpeta primero")
+            # Verificar si hay datos cargados
+            if not hasattr(self, 'df_actual'):
+                messagebox.showerror("Error", "Debe cargar datos primero usando el botón 'Cargar Datos'")
                 return
-
-            # Cargar y procesar datos
-            df_combinado = self.cargar_datasets()
-            df_procesado = self.utilidades.procesar_datos(df_combinado)
-
-            if not self.utilidades.validar_datos(df_procesado):
-                raise ValueError("Los datos no cumplen con los requisitos mínimos")
-
-            # Entrenar modelo
-            X = self.modelo.preparar_caracteristicas(df_procesado)
-            y = df_procesado['M_Vta -15']
+            
+            # Verificar si la predicción está activada    
+            if not self.usar_prediccion.get():
+                messagebox.showinfo("Info", "La predicción de demanda está desactivada. Active la casilla para usar el modelo predictivo.")
+                return
+                
+            # Crear modelo si no existe
+            if not self.modelo:
+                self.modelo = ModeloPrediccion()
+                print("Modelo predictivo inicializado")
+            
+            # Preparar datos para entrenamiento
+            print("Preparando datos para entrenamiento...")
+            print(f"Columnas disponibles: {self.df_actual.columns.tolist()}")
+            
+            # Verificar columnas necesarias
+            columnas_req = ['M_Vta -15', 'Vta -15', 'M_Vta -15 AA']
+            faltantes = [col for col in columnas_req if col not in self.df_actual.columns]
+            if faltantes:
+                raise ValueError(f"Faltan columnas requeridas para entrenamiento: {faltantes}")
+            
+            # Preparar características y entrenar
+            X = self.modelo.preparar_caracteristicas(self.df_actual)
+            y = self.df_actual['M_Vta -15'].astype(float)
+            
+            print("Iniciando entrenamiento...")
+            print(f"Datos de entrenamiento: {len(X)} registros")
+            print(f"Características utilizadas: {X.columns.tolist()}")
+            
             self.modelo.entrenar(X, y)
-
-            # Actualizar estado
-            modelos = self.modelo.listar_modelos()
-            if modelos:
-                modelo_actual = modelos[0]
-                self.modelo_cargado.set(
-                    f"Modelo cargado: {modelo_actual['nombre']} "
-                    f"(Fecha: {modelo_actual['fecha']})"
-                )
-
-            self.modelo_entrenado = True
-            messagebox.showinfo("Éxito", "Modelo entrenado y guardado correctamente")
-
+            
+            self.modelo_cargado.set("Estado: Modelo entrenado correctamente")
+            messagebox.showinfo("Éxito", 
+                              "Modelo entrenado correctamente\n\n"
+                              f"Registros utilizados: {len(X)}\n"
+                              f"Características: {len(X.columns)}")
+            
         except Exception as e:
-            messagebox.showerror("Error", f"Error en entrenamiento: {str(e)}")
-
-    def optimizar_produccion(self):
-        """Realiza la optimización de la producción"""
-        if not self.modelo_entrenado:
-            messagebox.showerror("Error", "No hay modelo válido cargado")
-            return
+            print(f"Error detallado en entrenamiento: {str(e)}")
+            messagebox.showerror("Error", 
+                               f"Error en entrenamiento: {str(e)}\n\n"
+                               "Revise la consola para más detalles")
             
+    def generar_planificacion(self):
+        """Ejecuta la optimización de producción"""
         try:
-            # Validar fechas
-            try:
-                fecha_inicio = datetime.strptime(self.fecha_inicio.get(), '%Y-%m-%d')
-                fecha_fin = datetime.strptime(self.fecha_fin.get(), '%Y-%m-%d')
+            if not hasattr(self, 'df_actual'):
+                raise ValueError("Debe cargar datos primero")
                 
-                if fecha_inicio > fecha_fin:
-                    raise ValueError("La fecha de inicio debe ser anterior a la fecha fin")
-                
-                dias_habiles = self.calendario.obtener_dias_habiles_rango(fecha_inicio, fecha_fin)
-                if not dias_habiles:
-                    raise ValueError("No hay días hábiles en el rango seleccionado")
-                
-            except ValueError as e:
-                messagebox.showerror("Error", str(e))
-                return
-            
-            # Cargar datos actuales
-            df_actual = self.cargar_datasets()
-            df_procesado = self.utilidades.procesar_datos(df_actual)
-            
-            # Agregar información de días hábiles
-            df_procesado['dias_habiles'] = len(dias_habiles)
-            
-            # Realizar predicción
-            X = self.modelo.preparar_caracteristicas(df_procesado)
-            df_procesado['DEMANDA_PREDICHA'] = self.modelo.predecir(X)
-            
-            # Inicializar optimizador si no existe
+            # Crear optimizador si no existe
             if not self.optimizador:
                 self.optimizador = Optimizador(
                     dias_stock_seguridad=int(self.params['dias_stock_seguridad'].get()),
                     horas_min_produccion=float(self.params['horas_min_produccion'].get())
                 )
             
-            # Optimizar producción
-            horas_produccion, cantidades_produccion, _ = self.optimizador.optimizar_produccion(
-                df_procesado,
+            # Optimizar
+            horas, cantidades, objetivo = self.optimizador.optimizar_produccion(
+                self.df_actual,
                 float(self.params['horas_disponibles'].get()),
                 float(self.params['horas_mantenimiento'].get())
             )
             
-            # Preparar resultados
-            df_procesado['CAJAS_PRODUCIR'] = cantidades_produccion
-            df_procesado['HORAS_PRODUCCION'] = horas_produccion
-            df_procesado['FECHA_INICIO'] = self.fecha_inicio.get()
-            df_procesado['FECHA_FIN'] = self.fecha_fin.get()
-            df_procesado['DIAS_HABILES'] = len(dias_habiles)
-            
             # Guardar resultados
+            self.df_actual['HORAS_PRODUCCION'] = horas
+            self.df_actual['CANTIDADES_PRODUCCION'] = cantidades
+            
+            # Guardar archivo
             ruta_salida = filedialog.asksaveasfilename(
                 defaultextension=".csv",
                 filetypes=[("CSV files", "*.csv")],
@@ -344,44 +274,81 @@ class SistemaStock:
             )
             
             if ruta_salida:
-                # Asegurar que el directorio existe
-                os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
-                
-                # Guardar archivo
-                df_procesado.to_csv(ruta_salida, index=False, sep=';')
-                
-                # Mostrar resumen
-                total_cajas = df_procesado['CAJAS_PRODUCIR'].sum()
-                total_horas = df_procesado['HORAS_PRODUCCION'].sum()
-                productos_programados = (df_procesado['CAJAS_PRODUCIR'] > 0).sum()
-                
-                mensaje = (
-                    f"Plan de producción generado exitosamente\n\n"
-                    f"Período: {self.fecha_inicio.get()} a {self.fecha_fin.get()}\n"
-                    f"Días hábiles: {len(dias_habiles)}\n"
-                    f"Productos programados: {productos_programados}\n"
-                    f"Total cajas: {total_cajas:.0f}\n"
-                    f"Total horas: {total_horas:.1f}\n\n"
-                    f"Plan guardado en: {Path(ruta_salida).name}"
+                self.df_actual.to_csv(ruta_salida, index=False, sep=';')
+                messagebox.showinfo("Éxito", 
+                    f"Optimización completada:\n"
+                    f"Total horas: {horas.sum():.1f}\n"
+                    f"Total cajas: {cantidades.sum():.0f}\n"
+                    f"Productos programados: {(cantidades > 0).sum()}"
                 )
-                
-                messagebox.showinfo("Éxito", mensaje)
                 
         except Exception as e:
             messagebox.showerror("Error", f"Error en optimización: {str(e)}")
-            print(f"Error detallado: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            
+    def mostrar_evolucion(self):
+        """Muestra gráfico de evolución de métricas"""
+        try:
+            if not self.optimizador:
+                raise ValueError("No hay datos de optimización")
+                
+            fig = self.optimizador.generar_grafico_evolucion()
+            if fig:
+                self._mostrar_grafico(fig)
+            else:
+                messagebox.showinfo("Info", "No hay datos suficientes para mostrar evolución")
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Error mostrando evolución: {str(e)}")
+            
+    def mostrar_comparacion(self):
+        """Muestra gráfico comparativo de stock"""
+        try:
+            if not self.optimizador:
+                raise ValueError("No hay datos de optimización")
+                
+            # Permitir seleccionar archivo de datos reales
+            archivo_real = filedialog.askopenfilename(
+                title="Seleccionar datos reales",
+                filetypes=[("CSV files", "*.csv")]
+            )
+            
+            if archivo_real:
+                df_real = pd.read_csv(archivo_real, sep=';')
+                fig = self.optimizador.generar_grafico_comparativo(df_real)
+                if fig:
+                    self._mostrar_grafico(fig)
+                    
+                    # Mostrar métricas
+                    metricas = self.optimizador.comparar_real_estimado(df_real)
+                    messagebox.showinfo("Métricas de Comparación",
+                        f"Error medio: {metricas['error_medio']:.2f}\n"
+                        f"Error porcentual: {metricas['error_porcentual']:.1f}%\n"
+                        f"Productos afectados: {metricas['productos_afectados']}"
+                    )
+                    
+        except Exception as e:
+            messagebox.showerror("Error", f"Error en comparación: {str(e)}")
+            
+    def _mostrar_grafico(self, fig):
+        """Muestra un gráfico de plotly en el canvas"""
+        # Convertir gráfico a imagen
+        img_bytes = pio.to_image(fig, format="png")
+        img = Image.open(io.BytesIO(img_bytes))
+        
+        # Ajustar tamaño
+        width = self.grafico_canvas.winfo_width()
+        height = 400
+        img = img.resize((width, height), Image.Resampling.LANCZOS)
+        
+        # Mostrar en canvas
+        self.grafico_photo = ImageTk.PhotoImage(img)
+        self.grafico_canvas.delete("all")
+        self.grafico_canvas.create_image(0, 0, anchor="nw", image=self.grafico_photo)
 
 def main():
-    try:
-        root = tk.Tk()
-        app = SistemaStock(root)
-        root.mainloop()
-    except Exception as e:
-        print(f"Error iniciando aplicación: {e}")
-        import traceback
-        traceback.print_exc()
+    root = tk.Tk()
+    app = SistemaStock(root)
+    root.mainloop()
 
 if __name__ == "__main__":
     main()

@@ -34,64 +34,62 @@ class ModeloEntrenamiento:
         # Cargar modelo si existe
         self.cargar_modelo()
         
-    def cargar_datasets(self):
-        """Carga todos los datasets de la carpeta seleccionada"""
-        carpeta = self.ruta_carpeta.get()
-        if not carpeta:
-            raise ValueError("Debe seleccionar una carpeta primero")
+    def cargar_datasets(self, carpeta: str) -> pd.DataFrame:
+        """
+        Carga todos los datasets CSV de la carpeta seleccionada
         
-        datasets = []
-        archivos_validos = [f for f in os.listdir(carpeta) 
-                           if f.endswith(('.xlsx', '.xls', '.csv'))]
-        
-        for archivo in archivos_validos:
-            ruta_completa = os.path.join(carpeta, archivo)
-            try:
-                # Leer el archivo CSV
-                with open(ruta_completa, 'r', encoding='cp1252') as f:
-                    lineas = f.readlines()
-                
-                # Encontrar la línea que contiene los encabezados
-                indice_headers = -1
-                for i, linea in enumerate(lineas):
-                    if 'COD_ART;NOM_ART;COD_GRU' in linea:
-                        indice_headers = i
-                        break
-                
-                if indice_headers == -1:
-                    print(f"No se encontraron encabezados en {archivo}")
-                    continue
-                
-                # Crear un nuevo archivo temporal con solo los datos relevantes
-                temp_file = os.path.join(os.path.dirname(ruta_completa), f'temp_{archivo}')
-                with open(temp_file, 'w', encoding='cp1252') as f:
-                    f.writelines(lineas[indice_headers:])
-                
-                # Leer el archivo temporal con pandas
-                df = pd.read_csv(temp_file, sep=';', encoding='cp1252')
-                
-                # Eliminar el archivo temporal
-                os.remove(temp_file)
-                
-                if not df.empty:
-                    datasets.append(df)
-                    print(f"Archivo cargado: {archivo}")
+        Args:
+            carpeta: Ruta a la carpeta con los archivos CSV
             
-            except Exception as e:
-                print(f"Error cargando {archivo}: {e}")
-                continue
-        
-        if not datasets:
-            raise ValueError("No se encontraron datos válidos en los archivos")
-        
-        # Combinar todos los datasets
-        df_combinado = pd.concat(datasets, ignore_index=True)
-        
-        print(f"\nColumnas encontradas:")
-        print(df_combinado.columns.tolist())
-        print(f"Total de registros: {len(df_combinado)}")
-        
-        return df_combinado
+        Returns:
+            DataFrame combinado con todos los datos
+        """
+        try:
+            if not os.path.exists(carpeta):
+                raise ValueError(f"La carpeta {carpeta} no existe")
+            
+            # Buscar todos los archivos CSV en la carpeta
+            archivos_csv = [f for f in os.listdir(carpeta) if f.lower().endswith('.csv')]
+            
+            if not archivos_csv:
+                raise ValueError("No se encontraron archivos CSV en la carpeta")
+            
+            datasets = []
+            
+            for archivo in archivos_csv:
+                ruta_completa = os.path.join(carpeta, archivo)
+                try:
+                    # Intentar leer el CSV con diferentes encodings
+                    df = None
+                    for encoding in ['utf-8', 'latin1', 'cp1252']:
+                        try:
+                            df = pd.read_csv(ruta_completa, sep=';', encoding=encoding)
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    
+                    if df is None:
+                        print(f"No se pudo leer el archivo {archivo} con ningún encoding")
+                        continue
+                    
+                    # Cargar el archivo si no está vacío
+                    if not df.empty:
+                        datasets.append(df)
+                        print(f"Archivo cargado: {archivo} ({len(df)} registros)")
+                    
+                except Exception as e:
+                    print(f"Error procesando {archivo}: {str(e)}")
+            
+            if not datasets:
+                raise ValueError("No se pudieron cargar datos válidos de ningún archivo")
+            
+            # Combinar datasets
+            df_combinado = pd.concat(datasets, ignore_index=True)
+            
+            return df_combinado
+            
+        except Exception as e:
+            raise Exception(f"Error cargando datasets: {str(e)}")
 
     def analizar_patrones_temporales(self, df: pd.DataFrame) -> Dict:
         """
