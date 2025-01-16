@@ -212,7 +212,7 @@ class SistemaStock:
             
             # Preparar datos para entrenamiento
             print("Preparando datos para entrenamiento...")
-            print(f"Columnas disponibles: {self.df_actual.columns.tolist()}")
+            print(f"Columnas disponibles asd: {self.df_actual.columns.tolist()}")
             
             # Verificar columnas necesarias
             columnas_req = ['M_Vta -15', 'Vta -15', 'M_Vta -15 AA']
@@ -283,7 +283,7 @@ class SistemaStock:
                 )
                 
         except Exception as e:
-            messagebox.showerror("Error", f"Error en optimización: {str(e)}")
+            messagebox.showerror("Error", f"Error en optimización main: {str(e)}")
             
     def mostrar_evolucion(self):
         """Muestra gráfico de evolución de métricas"""

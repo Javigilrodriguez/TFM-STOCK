@@ -87,7 +87,7 @@ class Prediccion:
             return horas, cantidades, resultado.fun
 
         except Exception as e:
-            print(f"Error en optimización: {e}")
+            print(f"Error en optimización predd: {e}")
             raise
     
     def validar_solucion(self, df, cantidades_produccion):
