@@ -172,16 +172,8 @@ class ModeloPrediccion:
             traceback.print_exc()
             return False
     
+    # En el archivo modelo.py, método preparar_caracteristicas()
     def preparar_caracteristicas(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Prepara las características para el modelo considerando decimales con coma
-
-        Args:
-            df: DataFrame con los datos
-
-        Returns:
-            DataFrame con las características preparadas
-        """
         try:
             def convertir_valor(valor):
                 """Convierte valores con coma decimal a float"""
@@ -193,9 +185,20 @@ class ModeloPrediccion:
                 except (ValueError, TypeError):
                     return 0.0
 
+            # Verificar columnas requeridas
+            columnas_requeridas = ['COD_ART', 'NOM_ART', 'Disponible', 'Cj/H', 'DEMANDA_PREDICHA']
+            for col in columnas_requeridas:
+                if col not in df.columns:
+                    df[col] = 0
+            
+            # Añadir columnas que falten con valores cero
+            for col in columnas_requeridas:
+                if col not in df.columns:
+                    df[col] = 0
+
             caracteristicas = pd.DataFrame()
             
-            # Características base con conversión de valores
+            # Preparar características
             caracteristicas['venta_actual'] = df['M_Vta -15'].apply(convertir_valor)
             caracteristicas['venta_anterior'] = df['M_Vta -15 AA'].apply(convertir_valor)
             caracteristicas['stock_total'] = (
@@ -204,11 +207,11 @@ class ModeloPrediccion:
                 df['Stock Externo'].apply(convertir_valor)
             )
             
-            # Características derivadas
-            caracteristicas['dias_cobertura'] = caracteristicas['stock_total'] / np.where(
+            # Características derivadas con manejo de división por cero
+            caracteristicas['dias_cobertura'] = np.where(
                 caracteristicas['venta_actual'] > 0,
-                caracteristicas['venta_actual'] / 15,
-                1
+                caracteristicas['stock_total'] / caracteristicas['venta_actual'],
+                0
             )
             
             caracteristicas['ratio_venta'] = np.where(
@@ -228,6 +231,8 @@ class ModeloPrediccion:
             
         except Exception as e:
             print(f"Error preparando características de modelo: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def entrenar(self, X: pd.DataFrame, y: pd.Series):
@@ -268,19 +273,19 @@ class ModeloPrediccion:
             raise
     
     def predecir(self, X: pd.DataFrame) -> np.ndarray:
-        """
-        Realiza predicciones usando el modelo
-
-        Args:
-            X: Características para predicción
-
-        Returns:
-            Array con predicciones
-        """
         if not self.modelo_cargado:
-            raise ValueError("No hay modelo válido cargado. Por favor, entrene o cargue un modelo primero.")
+            raise ValueError("No hay modelo válido cargado.")
             
         try:
+            # Verificar y añadir columnas si faltan
+            columnas_requeridas = self.features
+            for col in columnas_requeridas:
+                if col not in X.columns:
+                    X[col] = 0
+            
+            # Seleccionar solo las columnas necesarias
+            X = X[columnas_requeridas]
+            
             # Limpiar datos de entrada
             X = X.fillna(0)
             X = X.replace([np.inf, -np.inf], 0)
@@ -294,6 +299,8 @@ class ModeloPrediccion:
             
         except Exception as e:
             print(f"Error en predicción: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def validar_predicciones(self, predicciones: np.ndarray, 

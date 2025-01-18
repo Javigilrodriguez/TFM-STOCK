@@ -85,20 +85,10 @@ class Utilidades:
             raise Exception(f"Error cargando datasets: {str(e)}")
 
     def procesar_datos(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Procesa y limpia los datos del DataFrame
-        
-        Args:
-            df: DataFrame a procesar
-            
-        Returns:
-            DataFrame procesado
-        """
         try:
             df_proc = df.copy()
             
             def limpiar_valor_numerico(valor):
-                """Limpia un valor numérico con posible formato español"""
                 if pd.isna(valor) or valor == '' or valor == '(en blanco)':
                     return 0
                 if isinstance(valor, (int, float)):
@@ -111,49 +101,24 @@ class Utilidades:
                 except:
                     return 0
             
-            # Columnas numéricas puras (solo números)
-            columnas_numericas = [
-                'Disponible', 'Calidad', 'Pedido', 
-                'Vta -15', 'Vta -60', 'Vta -15 AA', 'Vta +15 AA'
-            ]
-            
-            # Columnas con posible formato especial
-            columnas_especiales = [
-                'Cj/H', 'Stock Externo', 'M_Vta -15', 'M_Vta-60',
-                'M_Vta -15 AA', 'M_Vta +15 AA', '% Vta-15/ AA', '% Vta-15/ +15 AA'
-            ]
-            
             # Procesar columnas numéricas
-            for col in columnas_numericas:
-                if col in df_proc.columns:
-                    df_proc[col] = pd.to_numeric(df_proc[col], errors='coerce').fillna(0)
+            columnas_numericas = [
+                'Disponible', 'Calidad', 'Stock Externo', 
+                'M_Vta -15', 'M_Vta -15 AA'
+            ]
             
-            # Procesar columnas especiales
-            for col in columnas_especiales:
+            for col in columnas_numericas:
                 if col in df_proc.columns:
                     df_proc[col] = df_proc[col].apply(limpiar_valor_numerico)
             
-            # Mantener columnas de texto como están
-            columnas_texto = ['COD_ART', 'NOM_ART', 'COD_GRU', '1ª OF', 'OF']
-            for col in columnas_texto:
-                if col in df_proc.columns:
-                    df_proc[col] = df_proc[col].fillna('')
-            
-            # Calcular columnas adicionales
+            # Calcular columnas adicionales de forma robusta
             df_proc['STOCK_TOTAL'] = (
-                df_proc['Disponible'] + 
-                df_proc['Calidad'] + 
-                df_proc['Stock Externo']
+                df_proc.get('Disponible', 0) + 
+                df_proc.get('Calidad', 0) + 
+                df_proc.get('Stock Externo', 0)
             )
             
-            if self.debug:
-                print("\nTipos de datos después de procesar:")
-                print(df_proc.dtypes)
-                print("\nMuestra de valores procesados:")
-                print(df_proc[['Cj/H', 'M_Vta -15', 'STOCK_TOTAL']].head())
-            
             return df_proc
-            
         except Exception as e:
             print(f"Error procesando datos: {str(e)}")
             raise

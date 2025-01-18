@@ -238,12 +238,21 @@ class SistemaStock:
                     horas_min_produccion=float(self.params['horas_min_produccion'].get())
                 )
             
+            # Crear DataFrame temporal con las columnas necesarias
+            df_temp = self.df_actual.copy()
+            
+            # Asegurar que existan todas las columnas requeridas
+            columnas_requeridas = ['COD_ART', 'NOM_ART', 'Disponible', 'Cj/H', 'DEMANDA_PREDICHA']
+            for col in columnas_requeridas:
+                if col not in df_temp.columns:
+                    df_temp[col] = 0
+            
             # Optimizar considerando todo el período
             horas_total = float(self.params['horas_disponibles'].get()) * dias_periodo
             mant_total = float(self.params['horas_mantenimiento'].get()) * dias_periodo
             
             horas, cantidades, objetivo = self.optimizador.optimizar_produccion(
-                self.df_actual,
+                df_temp,
                 horas_total,
                 mant_total
             )
@@ -256,37 +265,18 @@ class SistemaStock:
             self.df_actual['PRODUCCION_DIARIA'] = cantidades / dias_periodo
             self.df_actual['HORAS_DIARIAS'] = horas / dias_periodo
             
-            # Guardar archivo
-            ruta_salida = filedialog.asksaveasfilename(
-                defaultextension=".csv",
-                filetypes=[("CSV files", "*.csv")],
-                initialfile=f"plan_produccion_{fecha_inicio.strftime('%Y%m%d')}_{fecha_fin.strftime('%Y%m%d')}.csv"
+            # Mostrar resultados
+            messagebox.showinfo(
+                "Éxito", 
+                f"Optimización completada para {dias_periodo} días:\n"
+                f"Total horas: {horas.sum():.1f}\n"
+                f"Total cajas: {cantidades.sum():.0f}\n"
+                f"Productos programados: {(cantidades > 0).sum()}"
             )
-            
-            if ruta_salida:
-                # Seleccionar columnas relevantes para el reporte
-                cols_reporte = [
-                    'COD_ART', 'NOM_ART', 'Disponible', 
-                    'PRODUCCION_DIARIA', 'HORAS_DIARIAS',
-                    'CANTIDADES_PRODUCCION', 'HORAS_PRODUCCION'
-                ]
-                
-                df_reporte = self.df_actual[cols_reporte].copy()
-                df_reporte['PERIODO'] = f"{fecha_inicio.strftime('%Y-%m-%d')} a {fecha_fin.strftime('%Y-%m-%d')}"
-                df_reporte['DIAS_PERIODO'] = dias_periodo
-                
-                df_reporte.to_csv(ruta_salida, index=False, sep=';')
-                
-                messagebox.showinfo(
-                    "Éxito", 
-                    f"Optimización completada para {dias_periodo} días:\n"
-                    f"Total horas: {horas.sum():.1f}\n"
-                    f"Total cajas: {cantidades.sum():.0f}\n"
-                    f"Productos programados: {(cantidades > 0).sum()}"
-                )
                 
         except Exception as e:
             messagebox.showerror("Error", f"Error en optimización: {str(e)}")
+            raise
             
     def mostrar_evolucion(self):
         """Muestra gráfico de evolución de métricas"""

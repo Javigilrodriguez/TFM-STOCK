@@ -136,5 +136,5 @@ class Optimizador:
             return horas, cantidades, resultado.fun
             
         except Exception as e:
-            self._log(f"Error en optimización: {str(e)}")
+            self._log(f"Error en optimización opt: {str(e)}")
             raise
