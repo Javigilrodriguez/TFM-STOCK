@@ -42,10 +42,22 @@ class ProductionOptimizer:
             features = []
             targets = []
             
-            # Convertir columnas numéricas
-            df['cajas_hora'] = pd.to_numeric(df['Cj/H'].str.replace(',', '.'), errors='coerce')
-            df['ventas_15d'] = pd.to_numeric(df['M_Vta -15'].str.replace(',', '.'), errors='coerce')
-            df['ventas_15d_anterior'] = pd.to_numeric(df['M_Vta -15 AA'].str.replace(',', '.'), errors='coerce')
+            # Convertir columnas numéricas y limpiar datos
+            df['cajas_hora'] = pd.to_numeric(df['Cj/H'].str.replace(',', '.').str.strip(), errors='coerce')
+            df['ventas_15d'] = pd.to_numeric(df['M_Vta -15'].str.replace(',', '.').str.strip(), errors='coerce')
+            df['ventas_15d_anterior'] = pd.to_numeric(df['M_Vta -15 AA'].str.replace(',', '.').str.strip(), errors='coerce')
+            
+            # Reemplazar NaN con 0 para ventas anteriores
+            df['ventas_15d_anterior'] = df['ventas_15d_anterior'].fillna(0)
+            
+            # Filtrar productos sin datos de ventas actuales o capacidad
+            df = df.dropna(subset=['cajas_hora', 'ventas_15d'])
+            
+            logger.info(f"\nEstadísticas de datos:")
+            logger.info(f"Registros totales: {len(df)}")
+            logger.info(f"Productos con ventas: {df['ventas_15d'].notna().sum()}")
+            logger.info(f"Rango de ventas: {df['ventas_15d'].min():.2f} - {df['ventas_15d'].max():.2f}")
+            logger.info(f"Media de ventas: {df['ventas_15d'].mean():.2f}")
             
             # Calcular tendencias y patrones
             df['tendencia'] = np.where(
@@ -200,14 +212,19 @@ def main():
             
             # Hacer algunas predicciones de prueba
             logger.info("\nProbando predicciones para algunos productos:")
-            sample_products = df.head(3)  # Tomar 3 productos de ejemplo
             
-            for _, product in sample_products.iterrows():
+            # Filtrar productos con datos válidos
+            valid_products = df[df['ventas_15d'].notna()].head(3)
+            
+            for _, product in valid_products.iterrows():
                 prediction = optimizer.predict_demand(product)
                 if prediction is not None:
                     logger.info(f"\nProducto: {product['NOM_ART']}")
-                    logger.info(f"Ventas actuales: {product['M_Vta -15']}")
+                    logger.info(f"Ventas actuales: {product['ventas_15d']:.2f}")
+                    logger.info(f"Ventas año anterior: {product['ventas_15d_anterior']:.2f}")
+                    logger.info(f"Capacidad (cajas/hora): {product['cajas_hora']:.2f}")
                     logger.info(f"Predicción: {prediction:.2f}")
+                    logger.info(f"Variación vs actual: {((prediction - product['ventas_15d']) / product['ventas_15d'] * 100):.1f}%")
         else:
             logger.error("Error en el entrenamiento del modelo")
             
