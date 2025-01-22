@@ -67,3 +67,24 @@ Producto: Bocata
 2025-01-19 22:42:55,313 - INFO - Capacidad (cajas/hora): 224.46
 2025-01-19 22:42:55,313 - INFO - Predicción: 57.81
 2025-01-19 22:42:55,313 - INFO - Variación vs actual: 3.8%
+2025-01-19 23:19:06,078 - INFO - Cargando archivo: Dataset 02-01-25.csv
+2025-01-19 23:19:06,081 - INFO - Iniciando entrenamiento del modelo...
+2025-01-19 23:19:06,081 - INFO - Preparando datos para entrenamiento...
+2025-01-19 23:19:06,085 - ERROR - Error en preparación de features: The truth value of a Series is ambiguous. Use a.empty, a.bool(), a.item(), a.any() or a.all().
+2025-01-19 23:19:06,085 - ERROR - Error en preparación de datos de entrenamiento: 'eficiencia'
+2025-01-19 23:19:06,085 - ERROR - No hay datos suficientes para entrenar
+2025-01-19 23:19:06,085 - ERROR - Error en el entrenamiento del modelo
+2025-01-19 23:46:06,952 - INFO - Cargando archivo: Dataset 02-01-25.csv
+2025-01-19 23:46:06,954 - INFO - Iniciando entrenamiento del modelo...
+2025-01-19 23:46:06,954 - INFO - Preparando datos para entrenamiento...
+2025-01-19 23:46:06,958 - ERROR - Error en preparación de features: The truth value of a Series is ambiguous. Use a.empty, a.bool(), a.item(), a.any() or a.all().
+2025-01-19 23:46:06,958 - ERROR - Error en preparación de datos de entrenamiento: 'eficiencia'
+2025-01-19 23:46:06,958 - ERROR - No hay datos suficientes para entrenar
+2025-01-19 23:46:06,958 - ERROR - Error en el entrenamiento del modelo
+2025-01-19 23:47:27,768 - INFO - Cargando archivo: Dataset 02-01-25.csv
+2025-01-19 23:47:27,770 - INFO - Iniciando entrenamiento del modelo...
+2025-01-19 23:47:27,770 - INFO - Preparando datos para entrenamiento...
+2025-01-19 23:47:27,774 - ERROR - Error en preparación de features: The truth value of a Series is ambiguous. Use a.empty, a.bool(), a.item(), a.any() or a.all().
+2025-01-19 23:47:27,774 - ERROR - Error en preparación de datos de entrenamiento: 'eficiencia'
+2025-01-19 23:47:27,774 - ERROR - No hay datos suficientes para entrenar
+2025-01-19 23:47:27,774 - ERROR - Error en el entrenamiento del modelo

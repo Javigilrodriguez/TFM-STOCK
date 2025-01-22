@@ -1,235 +1,143 @@
 import pandas as pd
 import numpy as np
-from scipy.optimize import linprog
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from datetime import datetime, timedelta
 import logging
 import os
-import joblib
-from datetime import datetime, timedelta
 
 # Configurar logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('optimizer.log'),
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class ProductionOptimizer:
-    def __init__(self):
-        self.safety_stock_days = 3
-        self.min_production_hours = 2
-        self.available_hours_per_day = 24
-        self.product_change_penalty = 0.15
-        self.group_change_penalty = 0.30
-        self.demand_model = None
-        self.scaler = StandardScaler()
-        self.model_path = 'models'
-        
-        # Crear directorio para modelos si no existe
-        if not os.path.exists(self.model_path):
-            os.makedirs(self.model_path)
+class ProductionPlanner:
+    def __init__(self, safety_stock_days=3, min_production_hours=2):
+        self.safety_stock_days = safety_stock_days
+        self.min_production_hours = min_production_hours
 
-    def prepare_training_data(self, df, lookback=15):
-        """Prepara datos para entrenamiento del modelo de demanda"""
+    def load_data(self, folder_path="Dataset"):
         try:
-            features = []
-            targets = []
-            
-            # Convertir columnas numéricas y limpiar datos
-            df['cajas_hora'] = pd.to_numeric(df['Cj/H'].str.replace(',', '.').str.strip(), errors='coerce')
-            df['ventas_15d'] = pd.to_numeric(df['M_Vta -15'].str.replace(',', '.').str.strip(), errors='coerce')
-            df['ventas_15d_anterior'] = pd.to_numeric(df['M_Vta -15 AA'].str.replace(',', '.').str.strip(), errors='coerce')
-            
-            # Reemplazar NaN con 0 para ventas anteriores
-            df['ventas_15d_anterior'] = df['ventas_15d_anterior'].fillna(0)
-            
-            # Filtrar productos sin datos de ventas actuales o capacidad
-            df = df.dropna(subset=['cajas_hora', 'ventas_15d'])
-            
-            logger.info(f"\nEstadísticas de datos:")
-            logger.info(f"Registros totales: {len(df)}")
-            logger.info(f"Productos con ventas: {df['ventas_15d'].notna().sum()}")
-            logger.info(f"Rango de ventas: {df['ventas_15d'].min():.2f} - {df['ventas_15d'].max():.2f}")
-            logger.info(f"Media de ventas: {df['ventas_15d'].mean():.2f}")
-            
-            # Calcular tendencias y patrones
-            df['tendencia'] = np.where(
-                df['ventas_15d_anterior'] > 0,
-                (df['ventas_15d'] - df['ventas_15d_anterior']) / df['ventas_15d_anterior'],
-                0
-            )
-            
-            # Crear features para cada producto
-            for _, row in df.iterrows():
-                if pd.notna(row['cajas_hora']) and pd.notna(row['ventas_15d']):
-                    feature_vector = [
-                        row['ventas_15d'],
-                        row['ventas_15d_anterior'] if pd.notna(row['ventas_15d_anterior']) else 0,
-                        row['cajas_hora'],
-                        row['tendencia'],
-                        row['ventas_15d'] / row['cajas_hora'] if row['cajas_hora'] > 0 else 0
-                    ]
+            all_data = []
+            for file in os.listdir(folder_path):
+                if file.endswith('.csv'):
+                    file_path = os.path.join(folder_path, file)
+                    logger.info(f"Cargando archivo: {file}")
                     
-                    target = row['ventas_15d']  # Usamos ventas actuales como target
+                    # Leer la fecha del archivo
+                    with open(file_path, 'r', encoding='latin1') as f:
+                        date_str = f.readline().split(';')[1].strip().split()[0]
+                        logger.info(f"Fecha del archivo: {date_str}")
                     
-                    features.append(feature_vector)
-                    targets.append(target)
+                    # Leer el CSV
+                    df = pd.read_csv(file_path, sep=';', encoding='latin1', skiprows=4)
+                    df = df[df['COD_ART'].notna()]  # Eliminar filas sin código
+                    all_data.append(df)
             
-            return np.array(features), np.array(targets)
+            df = pd.concat(all_data, ignore_index=True)
             
-        except Exception as e:
-            logger.error(f"Error en preparación de datos de entrenamiento: {str(e)}")
-            return None, None
-
-    def train_demand_model(self, df):
-        """Entrena el modelo de predicción de demanda"""
-        try:
-            logger.info("Preparando datos para entrenamiento...")
-            X, y = self.prepare_training_data(df)
-            if X is None or y is None or len(X) == 0:
-                logger.error("No hay datos suficientes para entrenar")
-                return False
-                
-            # Split datos
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            # Convertir columnas numéricas
+            for col in ['Cj/H', 'M_Vta -15', 'Disponible', 'Calidad', 'Stock Externo']:
+                df[col] = pd.to_numeric(df[col].replace({'(en blanco)': '0', ',': '.'}, regex=True), errors='coerce')
             
-            # Escalar features
-            logger.info("Escalando features...")
-            X_train_scaled = self.scaler.fit_transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
+            # Eliminar duplicados
+            df = df.drop_duplicates(subset=['COD_ART'], keep='last')
+            logger.info(f"Datos cargados: {len(df)} productos únicos")
             
-            # Entrenar modelo
-            logger.info("Entrenando modelo Random Forest...")
-            self.demand_model = RandomForestRegressor(
-                n_estimators=100,
-                max_depth=10,
-                min_samples_split=5,
-                random_state=42,
-                n_jobs=-1  # Usar todos los cores disponibles
-            )
-            
-            self.demand_model.fit(X_train_scaled, y_train)
-            
-            # Evaluar modelo
-            y_pred = self.demand_model.predict(X_test_scaled)
-            mae = mean_absolute_error(y_test, y_pred)
-            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-            r2 = r2_score(y_test, y_pred)
-            
-            logger.info(f"\nMétricas del modelo de demanda:")
-            logger.info(f"MAE: {mae:.2f}")
-            logger.info(f"RMSE: {rmse:.2f}")
-            logger.info(f"R2: {r2:.2f}")
-            
-            # Guardar modelo
-            self._save_model()
-            
-            return True
+            return df
             
         except Exception as e:
-            logger.error(f"Error en entrenamiento del modelo: {str(e)}")
-            return False
-
-    def _save_model(self):
-        """Guarda el modelo y el scaler"""
-        try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            model_filename = f'demand_model_{timestamp}.joblib'
-            scaler_filename = f'scaler_{timestamp}.joblib'
-            
-            model_path = os.path.join(self.model_path, model_filename)
-            scaler_path = os.path.join(self.model_path, scaler_filename)
-            
-            joblib.dump(self.demand_model, model_path)
-            joblib.dump(self.scaler, scaler_path)
-            
-            logger.info(f"Modelo guardado en: {model_path}")
-            logger.info(f"Scaler guardado en: {scaler_path}")
-            
-        except Exception as e:
-            logger.error(f"Error guardando modelo: {str(e)}")
-
-    def predict_demand(self, product_data):
-        """Predice la demanda futura usando el modelo entrenado"""
-        try:
-            if self.demand_model is None:
-                logger.error("Modelo no entrenado")
-                return None
-                
-            # Preparar features
-            feature_vector = np.array([
-                product_data['ventas_15d'],
-                product_data['ventas_15d_anterior'] if pd.notna(product_data['ventas_15d_anterior']) else 0,
-                product_data['cajas_hora'],
-                product_data['tendencia'] if 'tendencia' in product_data else 0,
-                product_data['ventas_15d'] / product_data['cajas_hora'] if product_data['cajas_hora'] > 0 else 0
-            ]).reshape(1, -1)
-            
-            # Escalar y predecir
-            feature_vector_scaled = self.scaler.transform(feature_vector)
-            prediction = self.demand_model.predict(feature_vector_scaled)[0]
-            
-            return max(0, prediction)  # No permitir predicciones negativas
-            
-        except Exception as e:
-            logger.error(f"Error en predicción de demanda: {str(e)}")
+            logger.error(f"Error cargando datos: {str(e)}")
             return None
 
-def load_dataset():
-    """Carga el dataset desde la carpeta Dataset"""
-    try:
-        for file in os.listdir("Dataset"):
-            if file.endswith('.csv'):
-                file_path = os.path.join("Dataset", file)
-                logger.info(f"Cargando archivo: {file}")
-                return pd.read_csv(file_path, sep=';', encoding='latin1', skiprows=4)
-        raise FileNotFoundError("No se encontró ningún archivo CSV en la carpeta Dataset")
-    except Exception as e:
-        logger.error(f"Error cargando dataset: {str(e)}")
-        return None
+    def generate_production_plan(self, df, available_hours, planning_days=7):
+        try:
+            # Copiar solo las columnas necesarias
+            plan = df.copy()[['COD_ART', 'NOM_ART', 'Cj/H', 'M_Vta -15', 'Disponible', 'Calidad', 'Stock Externo']]
+            
+            # Calcular campos básicos
+            plan['cajas_hora'] = plan['Cj/H']
+            plan['stock_total'] = plan['Disponible'].fillna(0) + plan['Calidad'].fillna(0) + plan['Stock Externo'].fillna(0)
+            plan['demanda_diaria'] = plan['M_Vta -15'].fillna(0) / 15
+            
+            # Filtrar productos válidos
+            plan = plan[plan['cajas_hora'] > 0].copy()
+            logger.info(f"Planificando producción para {len(plan)} productos")
+            
+            # Calcular necesidades
+            plan['cajas_necesarias'] = np.maximum(
+                0, 
+                (self.safety_stock_days * plan['demanda_diaria']) - plan['stock_total']
+            )
+            
+            # Aplicar lote mínimo
+            plan['cajas_a_producir'] = np.maximum(
+                plan['cajas_necesarias'],
+                self.min_production_hours * plan['cajas_hora']
+            )
+            
+            # Calcular horas
+            plan['horas_necesarias'] = plan['cajas_a_producir'] / plan['cajas_hora']
+            
+            # Filtrar y ordenar
+            plan = plan[plan['cajas_a_producir'] > 0].sort_values('stock_total')
+            
+            # Ajustar al tiempo disponible
+            horas_totales = 0
+            productos_final = []
+            
+            for _, row in plan.iterrows():
+                if horas_totales + row['horas_necesarias'] <= available_hours:
+                    productos_final.append(row)
+                    horas_totales += row['horas_necesarias']
+            
+            plan_final = pd.DataFrame(productos_final)
+            
+            if not plan_final.empty:
+                fecha_inicio = datetime.now()
+                fecha_fin = fecha_inicio + timedelta(days=planning_days)
+                
+                # Guardar plan con fechas
+                filename = f"plan_produccion_{fecha_inicio.strftime('%Y%m%d')}_{fecha_fin.strftime('%Y%m%d')}.csv"
+                
+                # Crear encabezado con fechas
+                with open(filename, 'w', encoding='latin1') as f:
+                    f.write(f"Fecha Inicio;{fecha_inicio.strftime('%d/%m/%Y')};;;;;;;;\n")
+                    f.write(f"Fecha Fin;{fecha_fin.strftime('%d/%m/%Y')};;;;;;;;\n")
+                    f.write(";;;;;;;;;;;\n")
+                    f.write(";;;;;;;;;;;\n")
+                
+                # Guardar el plan después del encabezado
+                plan_final.to_csv(filename, sep=';', index=False, mode='a', encoding='latin1')
+                logger.info(f"Plan guardado en: {filename}")
+                
+                return plan_final, fecha_inicio, fecha_fin
+            
+            return None, None, None
+            
+        except Exception as e:
+            logger.error(f"Error en plan de producción: {str(e)}")
+            return None, None, None
+
+    def generate_report(self, plan, fecha_inicio, fecha_fin):
+        if plan is None or len(plan) == 0:
+            logger.error("No hay plan de producción para reportar")
+            return
+            
+        print(f"\nPLAN DE PRODUCCIÓN ({fecha_inicio.strftime('%d/%m/%Y')} - {fecha_fin.strftime('%d/%m/%Y')})")
+        print("-" * 80)
+        print(f"Total productos: {len(plan)}")
+        print(f"Total cajas: {plan['cajas_a_producir'].sum():.0f}")
+        print(f"Total horas: {plan['horas_necesarias'].sum():.1f}")
+        print("\nDetalle por producto:")
+        print(plan[['COD_ART', 'NOM_ART', 'stock_total', 'cajas_a_producir', 'horas_necesarias']].to_string(index=False))
 
 def main():
     try:
-        # Cargar datos
-        df = load_dataset()
-        if df is None:
-            return
-        
-        # Crear optimizador
-        optimizer = ProductionOptimizer()
-        
-        # Entrenar modelo
-        logger.info("Iniciando entrenamiento del modelo...")
-        if optimizer.train_demand_model(df):
-            logger.info("Entrenamiento completado exitosamente")
-            
-            # Hacer algunas predicciones de prueba
-            logger.info("\nProbando predicciones para algunos productos:")
-            
-            # Filtrar productos con datos válidos
-            valid_products = df[df['ventas_15d'].notna()].head(3)
-            
-            for _, product in valid_products.iterrows():
-                prediction = optimizer.predict_demand(product)
-                if prediction is not None:
-                    logger.info(f"\nProducto: {product['NOM_ART']}")
-                    logger.info(f"Ventas actuales: {product['ventas_15d']:.2f}")
-                    logger.info(f"Ventas año anterior: {product['ventas_15d_anterior']:.2f}")
-                    logger.info(f"Capacidad (cajas/hora): {product['cajas_hora']:.2f}")
-                    logger.info(f"Predicción: {prediction:.2f}")
-                    logger.info(f"Variación vs actual: {((prediction - product['ventas_15d']) / product['ventas_15d'] * 100):.1f}%")
-        else:
-            logger.error("Error en el entrenamiento del modelo")
-            
+        planner = ProductionPlanner()
+        df = planner.load_data()
+        if df is not None:
+            plan, fecha_inicio, fecha_fin = planner.generate_production_plan(df, available_hours=24*7)
+            planner.generate_report(plan, fecha_inicio, fecha_fin)
     except Exception as e:
-        logger.error(f"Error en ejecución: {str(e)}")
+        logger.error(f"Error: {str(e)}")
 
 if __name__ == "__main__":
     main()
